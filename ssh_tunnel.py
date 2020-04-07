@@ -22,17 +22,19 @@
  ***************************************************************************/
  This script initializes the plugin, making it known to QGIS.
 """
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication,QSize
 from qgis.PyQt.QtGui import QIcon, QPixmap
-from qgis.PyQt.QtWidgets import QAction, QToolBar
-from qgis.core import *
+from qgis.PyQt.QtWidgets import QAction, QToolBar, QMessageBox
+from ssh_tunnel import TunnelForwarder
 from PyQt5.QtWidgets import QFileDialog
+from qgis.core import QgsVectorLayer, QgsDataSourceUri, QgsProject, QgsSettings, Qgis
 
 # Initialize Qt resources from file resources.py
 from .resources import *
 # Import the code for the dialog
 from .ssh_tunnel_dialog import SshTunnelDialog
 import os.path
+from time import sleep
 
 """Wersja wtyczki"""
 plugin_version = '1.0.0'
@@ -78,7 +80,7 @@ class SshTunnelQgis:
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
-
+        self.keyPath = None
         self.isConnected = False
         self.server = None
 
@@ -195,10 +197,6 @@ class SshTunnelQgis:
         # will be set False in run()
         self.first_start = True
 
-
-
-
-
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
@@ -207,7 +205,6 @@ class SshTunnelQgis:
                 action)
             # self.iface.removeToolBarIcon(action)
             self.toolbar.removeAction(action)
-
 
     def run(self):
         """Run method that performs all the real work"""
@@ -222,6 +219,10 @@ class SshTunnelQgis:
             self.dlg.rbn_key.toggled.connect(self.radioButton_toggled)
             self.dlg.rbn_keypass.toggled.connect(self.radioButton_toggled)
             self.dlg.sbx_lport.valueChanged.connect(self.sbx_lport_valueChanged)
+            self.dlg.btn_key.clicked.connect(self.btn_key_clicked)
+            self.dlg.btn_test.clicked.connect(self.btn_test_clicked)
+            self.dlg.btn_ok.clicked.connect(self.btn_ok_clicked)
+            self.dlg.btn_cancel.clicked.connect(self.btn_cancel_clicked)
 
             # Inicjacja grafik
             self.dlg.img_main.setPixmap(QPixmap(':/plugins/ssh_tunnel/images/icon_uug.png'))
@@ -233,18 +234,11 @@ class SshTunnelQgis:
             self.dlg.setWindowTitle('%s %s' % (plugin_name, plugin_version))
             self.dlg.lbl_pluginVersion.setText('%s %s' % (plugin_name, plugin_version))
 
+            self.readSettings()
+
         # show the dialog
         self.dlg.show()
         self.lport = self.dlg.sbx_lport.value()
-        # Run the dialog event loop
-        result = self.dlg.exec_()
-        # See if OK was pressed
-        if result:
-            validationResult = self.validateForm()
-            if validationResult[0]:
-                self.actions[0].setEnabled(True)
-                self.actions[0].setText(self.tr(plugin_name + ' - disconnected'))
-                self.actions[0].setStatusTip(self.tr('Click to connect'))
 
     def toggleConnection(self):
         action = self.toolbar.sender()
@@ -253,11 +247,30 @@ class SshTunnelQgis:
             action.setIcon(QIcon(':/plugins/ssh_tunnel/images/icon_inactive.png'))
             action.setText(self.tr(plugin_name + ' - disconnected'))
             action.setStatusTip(self.tr('Click to connect'))
+            self.iface.messageBar().pushMessage("Info:",
+                                                "SSH tunnel has been disconnected",
+                                                level=Qgis.Info,
+                                                duration=10)
         else:
-            self.connect()
-            action.setIcon(QIcon(':/plugins/ssh_tunnel/images/icon_active.png'))
-            action.setText(self.tr(plugin_name + ' - connected, binded port:') + ' %s' % self.lport)
-            action.setStatusTip(self.tr('Click to disconnect'))
+            try:
+                self.connect()
+                self.iface.messageBar().pushMessage("Success:",
+                                                    "connection to %s:%d estabilished. Binded remote port %d to local %d" % (
+                                                        self.dlg.led_server.text(),
+                                                        self.dlg.sbx_sshport.value(),
+                                                        self.dlg.sbx_rport.value(),
+                                                        self.dlg.sbx_lport.value()
+                                                    ),
+                                                    level=Qgis.Success,
+                                                    duration=30)
+                action.setIcon(QIcon(':/plugins/ssh_tunnel/images/icon_active.png'))
+                action.setText(self.tr(plugin_name + ' - connected, binded port:') + ' %s' % self.lport)
+                action.setStatusTip(self.tr('Click to disconnect'))
+
+            except Exception as e:
+                self.showMessageBox(str(e))
+
+
 
 
     def radioButton_toggled(self, checked):
@@ -278,18 +291,99 @@ class SshTunnelQgis:
             self.dlg.led_pass.setEnabled(True)
             self.dlg.gbx_key.setEnabled(True)
 
+    def btn_key_clicked(self):
+        button = self.dlg.sender()
+        self.keyPath = QFileDialog.getOpenFileName()[0]
+        self.keyPath = None if self.keyPath == '' else self.keyPath
+        if self.keyPath:
+            button.setIcon(QIcon(':/plugins/ssh_tunnel/images/ok.svg'))
+        # button.setIconSize(QSize(65, 65))
+
+    def btn_test_clicked(self):
+        validationResult = self.validateForm()
+        if validationResult[0]:
+            try:
+                self.connect()
+                self.showMessageBox('Connection succeeded', QMessageBox.Information)
+            except Exception as e:
+                self.showMessageBox(str(e))
+            finally:
+                self.disconnect()
+        else:
+            self.showMessageBox(validationResult[1])
+    def btn_ok_clicked(self):
+        self.storeSettings()
+        validationResult = self.validateForm()
+        if validationResult[0]:
+            self.actions[0].setEnabled(True)
+            self.actions[0].setText(self.tr(plugin_name + ' - disconnected'))
+            self.actions[0].setStatusTip(self.tr('Click to connect'))
+            self.dlg.hide()
+        else:
+            self.showMessageBox(validationResult[1])
+
+
+    def btn_cancel_clicked(self):
+        self.dlg.hide()
 
     def sbx_lport_valueChanged(self):
         self.lport = self.dlg.sbx_lport.value()
         self.dlg.lbl_summary.setText("<FONT COLOR='#AA0000'>Your remote data will be available on 127.0.0.1:%d</FONT>" % self.lport)
 
     def validateForm(self):
+        if self.dlg.led_server.text() == '':
+            return False, 'Type ssh host address'
+        if self.dlg.led_user.text() == '':
+            return False, 'Type ssh username'
+        if (self.dlg.rbn_pass.isChecked() or self.dlg.rbn_keypass.isChecked()) and self.dlg.led_pass.text() == '':
+            return False, 'Type ssh password'
+        if (self.dlg.rbn_key.isChecked() or self.dlg.rbn_keypass.isChecked()) and not self.keyPath:
+            return False, 'Choose a Private Key file'
         return True, 'OK'
 
     def connect(self):
-        print('connect')
+        host = self.dlg.led_server.text()#str
+        sshport = self.dlg.sbx_sshport.value()#int
+        uname = self.dlg.led_user.text()#str
+        upass = self.dlg.led_pass.text()#str
+        lport = self.dlg.sbx_lport.value()#int
+        rport = self.dlg.sbx_rport.value()#int
+
+        self.server = TunnelForwarder(
+            (host, sshport),
+            ssh_username=uname,
+            ssh_password=upass,
+            remote_bind_address=('127.0.0.1', rport),
+            local_bind_address=('127.0.0.1', lport)
+        )
+
+        self.server.start()
         self.isConnected = True
 
     def disconnect(self):
-        print('disconnect')
+        if self.server.tunnel_is_up:
+            self.server.stop()
         self.isConnected = False
+
+    def storeSettings(self):
+        s = QgsSettings()
+        s.setValue("ssh_tunnel/host", self.dlg.led_server.text())
+        s.setValue("ssh_tunnel/sshport", self.dlg.sbx_sshport.value())
+        s.setValue("ssh_tunnel/uname", self.dlg.led_user.text())
+        s.setValue("ssh_tunnel/lport", self.dlg.sbx_lport.value())
+        s.setValue("ssh_tunnel/rport", self.dlg.sbx_rport.value())
+
+    def readSettings(self):
+        s = QgsSettings()
+        self.dlg.led_server.setText(s.value("ssh_tunnel/host", ''))
+        self.dlg.sbx_sshport.setValue(int(s.value("ssh_tunnel/sshport", 22)))
+        self.dlg.led_user.setText(s.value("ssh_tunnel/uname", ''))
+        self.dlg.sbx_lport.setValue(int(s.value("ssh_tunnel/lport", 55667)))
+        self.dlg.sbx_rport.setValue(int(s.value("ssh_tunnel/rport", 5432)))
+
+    def showMessageBox(self, message, level=QMessageBox.Warning):
+        msgBox = QMessageBox()
+        msgBox.setText(message)
+        msgBox.setWindowTitle(plugin_name)
+        msgBox.setIcon(level)
+        msgBox.exec()

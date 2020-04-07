@@ -22,8 +22,17 @@
  ***************************************************************************/
  This script initializes the plugin, making it known to QGIS.
 """
+import os, sys
+plugin_dir = os.path.dirname(__file__)
+site_package_sshtunnel = os.path.join(plugin_dir, 'libs/site-packages', 'sshtunnel')
 
-
+try:
+    import sshtunnel
+except ImportError:
+    import sys
+    sys.path.append(site_package_sshtunnel)
+    import sshtunnel
+TunnelForwarder = sshtunnel.SSHTunnelForwarder
 # noinspection PyPep8Naming
 def classFactory(iface):  # pylint: disable=invalid-name
     """Load SshTunnel class from file SshTunnel.
@@ -31,6 +40,6 @@ def classFactory(iface):  # pylint: disable=invalid-name
     :param iface: A QGIS interface instance.
     :type iface: QgsInterface
     """
-    #
+
     from .ssh_tunnel import SshTunnelQgis
     return SshTunnelQgis(iface)
