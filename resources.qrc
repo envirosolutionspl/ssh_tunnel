@@ -1,9 +1,9 @@
 <RCC>
     <qresource prefix="/plugins/ssh_tunnel" >
         <file>images/icon_uug.png</file>
-        <file>images/icon.png</file>
         <file>images/icon_inactive.png</file>
         <file>images/icon_active.png</file>
         <file>images/ok.svg</file>
+        <file>images/settings.svg</file>
     </qresource>
 </RCC>

@@ -178,6 +178,7 @@ class SshTunnelQgis:
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
         # toggle connection action
+        self.toolbar.addSeparator()
         self.add_action(
             ':/plugins/ssh_tunnel/images/icon_inactive.png',
             text=self.tr(plugin_name + ' - disconnected, configure connection details to connect'),
@@ -189,11 +190,12 @@ class SshTunnelQgis:
 
         # settings action
         self.add_action(
-            ':/plugins/ssh_tunnel/images/icon.png',
+            ':/plugins/ssh_tunnel/images/settings.svg',
             text=self.tr(plugin_name + ' - settings'),
             callback=self.run,
             parent=self.iface.mainWindow()
         )
+        self.toolbar.addSeparator()
         # will be set False in run()
         self.first_start = True
 
@@ -278,6 +280,7 @@ class SshTunnelQgis:
             return
         if self.dlg.rbn_pass.isChecked():
             self.dlg.lbl_pass.setEnabled(True)
+            self.dlg.lbl_pass.setText("SSH Password")
             self.dlg.led_pass.setEnabled(True)
             self.dlg.gbx_key.setEnabled(False)
 
@@ -288,6 +291,7 @@ class SshTunnelQgis:
 
         if self.dlg.rbn_keypass.isChecked():
             self.dlg.lbl_pass.setEnabled(True)
+            self.dlg.lbl_pass.setText("Private Key Password")
             self.dlg.led_pass.setEnabled(True)
             self.dlg.gbx_key.setEnabled(True)
 
@@ -349,21 +353,46 @@ class SshTunnelQgis:
         lport = self.dlg.sbx_lport.value()#int
         rport = self.dlg.sbx_rport.value()#int
 
-        self.server = TunnelForwarder(
-            (host, sshport),
-            ssh_username=uname,
-            ssh_password=upass,
-            remote_bind_address=('127.0.0.1', rport),
-            local_bind_address=('127.0.0.1', lport)
-        )
 
+        if self.dlg.rbn_pass.isChecked():
+            self.server = TunnelForwarder(
+                (host, sshport),
+                ssh_username=uname,
+                ssh_password=upass,
+                remote_bind_address=('127.0.0.1', rport),
+                local_bind_address=('127.0.0.1', lport)
+            )
+        if self.dlg.rbn_key.isChecked():
+            self.server = TunnelForwarder(
+                (host, sshport),
+                ssh_username=uname,
+                ssh_pkey=self.keyPath,
+                remote_bind_address=('127.0.0.1', rport),
+                local_bind_address=('127.0.0.1', lport)
+            )
+        if self.dlg.rbn_keypass.isChecked():
+            self.server = TunnelForwarder(
+                (host, sshport),
+                ssh_username=uname,
+                ssh_pkey=self.keyPath,
+                ssh_private_key_password=upass,
+                remote_bind_address=('127.0.0.1', rport),
+                local_bind_address=('127.0.0.1', lport)
+            )
         self.server.start()
         self.isConnected = True
+        print(self.server)
 
     def disconnect(self):
+        print("a")
+        print(self.server.tunnel_is_up)
+        print(self.server.is_active)
         if self.server.tunnel_is_up:
             self.server.stop()
+            print("b")
         self.isConnected = False
+        print("c")
+        print(self.server.is_active)
 
     def storeSettings(self):
         s = QgsSettings()
